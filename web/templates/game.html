@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UNANIMO AI — {{ .Game.Concept }}</title>
+  <link rel="manifest" href="/manifest.json" />
+  <meta name="theme-color" content="#0f172a" />
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet" />
+  <style>
+    :root {
+      --bg:#0f172a; --surface:#1e293b; --surface2:#334155;
+      --accent:#6366f1; --text:#e2e8f0; --muted:#94a3b8;
+    }
+    * { box-sizing: border-box; }
+    body { background:var(--bg); color:var(--text); font-family:'Inter',system-ui,sans-serif; }
+    .glass { background:rgba(30,41,59,0.85); backdrop-filter:blur(12px); border:1px solid rgba(99,102,241,0.2); }
+
+    /* ── Column Layout ── */
+    .columns-wrapper {
+      display:grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap:12px;
+    }
+    .player-col {
+      border-radius:16px; overflow:hidden;
+      border:2px solid var(--surface2); transition:border-color 0.3s, opacity 0.3s, filter 0.3s;
+      display:flex; flex-direction:column;
+    }
+    .player-col.active { border-color:var(--model-color); }
+    .player-col.done   { border-color:rgba(99,102,241,0.5); }
+    .player-col.error  { border-color:#ef4444; opacity:0.7; }
+    /* Not started yet (serial mode) */
+    .player-col.pending {
+      opacity:0.48;
+      filter:grayscale(0.35);
+    }
+    .player-col.pending .col-header { color:var(--muted) !important; }
+    .player-col.running { opacity:1; filter:none; }
+    .gen-spinner {
+      display:none;
+      width:14px; height:14px; margin-left:6px; vertical-align:middle;
+      border:2px solid var(--surface2);
+      border-top-color:var(--model-color);
+      border-radius:50%;
+      animation:spin 0.75s linear infinite;
+    }
+    .player-col.running .gen-spinner { display:inline-block; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+
+    .col-header {
+      padding:12px; text-align:center; font-weight:700; font-size:0.9rem;
+      background: linear-gradient(to bottom, color-mix(in srgb, var(--model-color) 22%, transparent), transparent);
+      border-bottom:1px solid var(--surface2); position:relative;
+    }
+    .status-dot {
+      display:inline-block; width:8px; height:8px; border-radius:50%;
+      margin-right:6px; background:var(--model-color);
+    }
+    .status-dot.pulse { animation: pulse 1s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+    .word-list { flex:1; padding:8px; display:flex; flex-direction:column; gap:4px; }
+    .word-slot {
+      display:flex; align-items:center; gap:8px;
+      padding:7px 10px; border-radius:8px; min-height:36px;
+      background:var(--surface); border:1px solid transparent;
+      transition:all 0.3s; font-size:0.875rem;
+    }
+    .word-slot .pos { color:var(--muted); font-size:0.75rem; width:14px; flex-shrink:0; }
+    .word-slot .word-text { flex:1; font-weight:500; }
+    .word-slot .pts { font-size:0.75rem; font-weight:700; color:var(--muted); }
+
+    /* Match highlighting */
+    .word-slot.strict-match  { border-color:rgba(234,179,8,0.6);  background:rgba(234,179,8,0.08); }
+    .word-slot.strict-match .pts { color:#eab308; }
+    .word-slot.semantic-match { border-color:rgba(99,102,241,0.7); background:rgba(99,102,241,0.12); }
+    .word-slot.semantic-match .pts { color:#818cf8; }
+    .word-slot.sync-bonus { border-color:rgba(168,85,247,0.7); background:rgba(168,85,247,0.12); }
+    .word-slot.sync-bonus .pts { color:#c084fc; }
+
+    /* Score footer */
+    .col-score {
+      padding:10px; border-top:1px solid var(--surface2); background:var(--surface);
+      display:grid; grid-template-columns:1fr 1fr; gap:4px; font-size:0.75rem;
+    }
+    .score-item { text-align:center; }
+    .score-val { font-size:1.2rem; font-weight:800; }
+    .score-label { color:var(--muted); }
+
+    /* Typing animation */
+    .word-slot.appearing .word-text::after {
+      content:'|'; animation:blink 0.5s step-end 4; color:var(--accent);
+    }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+    /* Status bar */
+    .status-bar {
+      position:fixed; bottom:0; left:0; right:0;
+      padding:12px 20px; display:flex; align-items:center; gap:12px;
+      background:rgba(15,23,42,0.95); backdrop-filter:blur(8px);
+      border-top:1px solid var(--surface2); z-index:100;
+    }
+    .status-indicator { display:flex; align-items:center; gap:6px; font-size:0.85rem; }
+    .dot { width:8px; height:8px; border-radius:50%; }
+    .dot.running  { background:#22c55e; animation:pulse 1s infinite; }
+    .dot.judging  { background:#f59e0b; animation:pulse 1s infinite; }
+    .dot.complete { background:#818cf8; }
+
+    /* Phase badge */
+    .phase-badge {
+      padding:4px 12px; border-radius:20px; font-size:0.75rem; font-weight:700;
+      background:var(--surface2); color:var(--muted);
+    }
+    .phase-badge.semantic { background:rgba(99,102,241,0.2); color:#818cf8; }
+
+    /* Leaderboard */
+    .leaderboard {
+      display:flex; gap:8px; overflow-x:auto; padding:8px 0;
+    }
+    .leader-card {
+      flex-shrink:0; background:var(--surface); border-radius:10px;
+      padding:8px 12px; text-align:center; border:1px solid var(--surface2);
+      min-width:100px; transition:all 0.3s;
+    }
+    .leader-card.first { border-color:#f59e0b; background:rgba(245,158,11,0.1); }
+
+    /* Toast */
+    .toast {
+      position:fixed; top:20px; right:20px; padding:10px 16px;
+      background:rgba(99,102,241,0.9); border-radius:10px; color:white;
+      font-size:0.85rem; font-weight:600; z-index:200; transform:translateX(200%);
+      transition:transform 0.3s;
+    }
+    .toast.show { transform:translateX(0); }
+  </style>
+</head>
+<body class="min-h-screen pb-16">
+
+  <!-- Toast notification -->
+  <div class="toast" id="toast"></div>
+
+  <!-- Header -->
+  <header class="glass sticky top-0 z-50 px-6 py-4 flex items-center justify-between">
+    <a href="/" style="color:var(--muted); text-decoration:none; font-size:0.85rem">← New Game</a>
+    <div class="text-center">
+      <div style="font-size:0.75rem; color:var(--muted); font-weight:600; letter-spacing:0.1em; text-transform:uppercase">Round Concept</div>
+      <div style="font-size:1.5rem; font-weight:900; color:var(--text)">{{ .Game.Concept }}</div>
+    </div>
+    <div id="phaseBadge" class="phase-badge">⏳ Generating...</div>
+  </header>
+
+  <!-- Columns -->
+  <main class="p-4 max-w-screen-xl mx-auto">
+    <div class="columns-wrapper" id="columnsWrapper">
+      {{ range $order := .ModelOrder }}
+        {{ $mid := print $order }}
+        {{ $player := index $.Game.Players $order }}
+        {{ $sid := index $.SafeIDs $mid }}
+        {{ $mc := index $.ModelColors $mid }}
+        {{ if $player }}
+        <div class="player-col" id="col_{{ $sid }}" data-mid="{{ $mid }}"
+          style="--model-color:{{ $mc }}">
+          <div class="col-header" style="color:{{ $mc }}">
+            <span class="status-dot" id="dot_{{ $sid }}"
+              style="background:{{ $mc }}"></span>
+            <span class="gen-spinner" id="spin_{{ $sid }}" title="Generating…"></span>
+            {{ $player.Config.Name }}
+            {{ if $player.Config.Persona }}
+            <div style="font-size:0.65rem; color:var(--muted); font-weight:400; margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%">
+              🎭 {{ $player.Config.Persona | truncate }}
+            </div>
+            {{ end }}
+          </div>
+          <div class="word-list" id="words_{{ $sid }}">
+            {{ range $i := seq 8 }}
+            <div class="word-slot" id="slot_{{ $sid }}_{{ add $i 1 }}">
+              <span class="pos">{{ add $i 1 }}</span>
+              <span class="word-text" style="color:var(--muted)">—</span>
+              <span class="pts"></span>
+            </div>
+            {{ end }}
+          </div>
+          <div class="col-score" id="score_{{ $sid }}">
+            <div class="score-item">
+              <div class="score-val" id="uscore_{{ $sid }}">—</div>
+              <div class="score-label">Unanimo</div>
+            </div>
+            <div class="score-item">
+              <div class="score-val" id="sscore_{{ $sid }}">—</div>
+              <div class="score-label">Sync</div>
+            </div>
+          </div>
+        </div>
+        {{ end }}
+      {{ end }}
+    </div>
+
+    <!-- Leaderboard (shown after scoring) -->
+    <div id="leaderboard" style="display:none; margin-top:24px">
+      <h3 style="font-size:1rem; font-weight:700; color:var(--muted); margin-bottom:8px; text-align:center; text-transform:uppercase; letter-spacing:0.1em">🏆 Rankings</h3>
+      <div class="leaderboard" id="leaderboardCards"></div>
+    </div>
+  </main>
+
+  <!-- Status Bar -->
+  <div class="status-bar">
+    <div class="status-indicator">
+      <div class="dot running" id="statusDot"></div>
+      <span id="statusText">Waiting for AI models...</span>
+    </div>
+    <div style="flex:1"></div>
+    <div id="progressText" style="font-size:0.8rem; color:var(--muted)"></div>
+  </div>
+
+  <script>
+    const GAME_ID = "{{ .GameID }}";
+    const MODEL_ORDER = {{ json .ModelOrder }};
+    const SAFE_IDS = {{ json .SafeIDs }};
+    const MODEL_COLORS = {{ json .ModelColors }};
+    const SERIAL_OLLAMA = {{ if .SerialOllamaPlayers }}true{{ else }}false{{ end }};
+    const PLAYERS_DONE_INIT = {{ json .PlayersDone }};
+    
+    // State
+    let strictMatches = {}; // word -> [modelIDs]
+    let playersComplete = {};
+    let totalPlayers = {{ len .ModelOrder }};
+    let phase = 'running';
+
+    // ── SSE Connection ────────────────────────────────────────────────────────
+    const evtSource = new EventSource(`/api/game/${GAME_ID}/stream`);
+
+    evtSource.addEventListener('word-added', e => {
+      const { payload } = JSON.parse(e.data);
+      const { model_id, word } = payload;
+      addWordToSlot(model_id, word.position, word.text);
+      checkStrictMatches();
+    });
+
+    evtSource.addEventListener('player-done', e => {
+      const { payload } = JSON.parse(e.data);
+      markPlayerDone(payload.model_id);
+    });
+
+    evtSource.addEventListener('player-error', e => {
+      const { payload } = JSON.parse(e.data);
+      markPlayerError(payload.model_id, payload.error);
+    });
+
+    evtSource.addEventListener('judge-start', () => {
+      phase = 'judging';
+      updateStatus('judging', '🔍 Judge analyzing semantic clusters...');
+      document.getElementById('phaseBadge').textContent = '🔍 Semantic Analysis';
+      document.getElementById('phaseBadge').className = 'phase-badge';
+    });
+
+    evtSource.addEventListener('judge-complete', e => {
+      const { payload } = JSON.parse(e.data);
+      showToast('✓ Semantic clustering complete');
+    });
+
+    evtSource.addEventListener('score-update', e => {
+      const { payload } = JSON.parse(e.data);
+      updateScores(payload.players, payload.phase);
+    });
+
+    evtSource.addEventListener('game-complete', e => {
+      const { payload } = JSON.parse(e.data);
+      phase = 'complete';
+      updateStatus('complete', '✓ Game complete — semantic scores applied');
+      document.getElementById('phaseBadge').textContent = '✅ Complete';
+      document.getElementById('phaseBadge').className = 'phase-badge semantic';
+      updateScores(payload.players, payload.phase);
+      renderLeaderboard(payload.players);
+      evtSource.close();
+    });
+
+    evtSource.addEventListener('game-error', e => {
+      updateStatus('complete', '❌ Game error');
+      evtSource.close();
+    });
+
+    document.addEventListener('DOMContentLoaded', initColumnStates);
+
+    // ── DOM Helpers ───────────────────────────────────────────────────────────
+
+    function safeIdFor(modelID) {
+      return SAFE_IDS[modelID] || '';
+    }
+
+    function addWordToSlot(modelID, position, word) {
+      const sid = safeIdFor(modelID);
+      const slot = document.getElementById(`slot_${sid}_${position}`);
+      if (!slot) return;
+      const textEl = slot.querySelector('.word-text');
+      textEl.textContent = word;
+      textEl.style.color = '';
+      slot.classList.add('appearing');
+      setTimeout(() => slot.classList.remove('appearing'), 800);
+
+      // Track for strict matching
+      if (!strictMatches[word.toLowerCase()]) strictMatches[word.toLowerCase()] = [];
+      if (!strictMatches[word.toLowerCase()].includes(modelID)) {
+        strictMatches[word.toLowerCase()].push(modelID);
+      }
+
+      // Update progress
+      updateProgress();
+    }
+
+    function checkStrictMatches() {
+      // Highlight slots where multiple models have the exact same word
+      document.querySelectorAll('.word-slot').forEach(slot => {
+        const word = slot.querySelector('.word-text').textContent.toLowerCase();
+        if (strictMatches[word] && strictMatches[word].length >= 2) {
+          if (!slot.classList.contains('semantic-match')) {
+            slot.classList.add('strict-match');
+            const pts = slot.querySelector('.pts');
+            if (pts) pts.textContent = `${strictMatches[word].length}`;
+          }
+        }
+      });
+    }
+
+    function initColumnStates() {
+      MODEL_ORDER.forEach((mid, i) => {
+        const sid = safeIdFor(mid);
+        const col = document.getElementById(`col_${sid}`);
+        const dot = document.getElementById(`dot_${sid}`);
+        if (!col) return;
+
+        if (PLAYERS_DONE_INIT[mid]) {
+          col.classList.add('done');
+          col.classList.remove('pending', 'running', 'active');
+          if (dot) dot.classList.remove('pulse');
+          playersComplete[mid] = true;
+          return;
+        }
+
+        if (SERIAL_OLLAMA) {
+          const beforeDone = MODEL_ORDER.slice(0, i).every(m => PLAYERS_DONE_INIT[m]);
+          if (beforeDone) {
+            col.classList.add('running', 'active');
+            col.classList.remove('pending');
+            if (dot) dot.classList.add('pulse');
+          } else {
+            col.classList.add('pending');
+            if (dot) dot.classList.remove('pulse');
+          }
+        } else {
+          col.classList.add('running');
+          if (dot) dot.classList.add('pulse');
+        }
+      });
+      updateProgress();
+    }
+
+    function advanceSerialTurn(finishedModelID) {
+      if (!SERIAL_OLLAMA) return;
+      const idx = MODEL_ORDER.indexOf(finishedModelID);
+      if (idx < 0 || idx + 1 >= MODEL_ORDER.length) return;
+      const nextMid = MODEL_ORDER[idx + 1];
+      const nextCol = document.getElementById(`col_${safeIdFor(nextMid)}`);
+      const nextDot = document.getElementById(`dot_${safeIdFor(nextMid)}`);
+      if (nextCol && !nextCol.classList.contains('done') && !nextCol.classList.contains('error')) {
+        nextCol.classList.remove('pending');
+        nextCol.classList.add('running', 'active');
+        if (nextDot) nextDot.classList.add('pulse');
+      }
+    }
+
+    function markPlayerDone(modelID) {
+      playersComplete[modelID] = true;
+      const sid = safeIdFor(modelID);
+      const col = document.getElementById(`col_${sid}`);
+      const dot = document.getElementById(`dot_${sid}`);
+      if (col) {
+        col.classList.remove('running', 'pending', 'active');
+        col.classList.add('done');
+      }
+      if (dot) dot.classList.remove('pulse');
+      advanceSerialTurn(modelID);
+      updateProgress();
+    }
+
+    function markPlayerError(modelID, error) {
+      const sid = safeIdFor(modelID);
+      const col = document.getElementById(`col_${sid}`);
+      const dot = document.getElementById(`dot_${sid}`);
+      if (col) {
+        col.classList.remove('running', 'pending', 'active');
+        col.classList.add('error');
+        const header = col.querySelector('.col-header');
+        if (header) {
+          header.insertAdjacentHTML('beforeend', 
+            `<div style="font-size:0.7rem;color:#ef4444;margin-top:4px">⚠ ${error.substring(0, 50)}</div>`);
+        }
+      }
+      if (dot) dot.classList.remove('pulse');
+      playersComplete[modelID] = true;
+      totalPlayers--;
+      advanceSerialTurn(modelID);
+      updateProgress();
+    }
+
+    function updateScores(players, scorePhase) {
+      Object.entries(players).forEach(([modelID, player]) => {
+        const sid = safeIdFor(modelID);
+        // Update score footer
+        const us = document.getElementById(`uscore_${sid}`);
+        const ss = document.getElementById(`sscore_${sid}`);
+        if (us) us.textContent = player.total_unanimo_score || player.unanimo_score || 0;
+        if (ss) ss.textContent = player.synchronicity_score || 0;
+
+        // Update word slot styling for semantic matches
+        if (scorePhase === 'semantic' && player.words) {
+          player.words.forEach((w, idx) => {
+            const slot = document.getElementById(`slot_${sid}_${idx + 1}`);
+            if (!slot) return;
+            const pts = slot.querySelector('.pts');
+            
+            if (w.cluster_id && w.cluster_id > 0) {
+              slot.classList.remove('strict-match');
+              slot.classList.add('semantic-match');
+            }
+            // Check synchronicity (will be updated from full scores)
+          });
+        }
+      });
+    }
+
+    function renderLeaderboard(players) {
+      const sorted = Object.entries(players)
+        .filter(([_, p]) => !p.error)
+        .sort(([_, a], [__, b]) => (b.total_unanimo_score || 0) - (a.total_unanimo_score || 0));
+
+      const cards = sorted.map(([modelID, p], i) => `
+        <div class="leader-card ${i === 0 ? 'first' : ''}">
+          <div style="color:${getModelColor(modelID)};font-weight:700;font-size:0.85rem">
+            ${i === 0 ? '🏆' : i === 1 ? '🥈' : i === 2 ? '🥉' : ''} 
+            ${p.config.name}
+          </div>
+          <div style="font-size:1.8rem;font-weight:900;color:var(--text)">${p.total_unanimo_score || 0}</div>
+          <div style="font-size:0.7rem;color:var(--muted)">
+            ${p.bonus > 0 ? `+${p.bonus} bonus · ` : ''}Sync: ${p.synchronicity_score || 0}
+          </div>
+        </div>
+      `).join('');
+
+      document.getElementById('leaderboardCards').innerHTML = cards;
+      document.getElementById('leaderboard').style.display = 'block';
+    }
+
+    function updateProgress() {
+      const done = Object.keys(playersComplete).length;
+      const el = document.getElementById('progressText');
+      if (el) el.textContent = `${done}/${totalPlayers} models done`;
+    }
+
+    function updateStatus(phase, text) {
+      const dot = document.getElementById('statusDot');
+      const textEl = document.getElementById('statusText');
+      if (dot) dot.className = `dot ${phase}`;
+      if (textEl) textEl.textContent = text;
+    }
+
+    function getModelColor(modelID) {
+      return MODEL_COLORS[modelID] || '#6366f1';
+    }
+
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 3000);
+    }
+  </script>
+</body>
+</html>

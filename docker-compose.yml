@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  unanimo-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      # Default 8888 on host: 8080 is often taken (IDE previews, other stacks). Container still listens on 8080.
+      - "${APP_HOST_PORT:-8888}:8080"
+    environment:
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://192.168.1.130:11434}
+      - OLLAMA_HTTP_TIMEOUT=${OLLAMA_HTTP_TIMEOUT:-900}
+      - OLLAMA_SERIAL_PLAYERS=${OLLAMA_SERIAL_PLAYERS:-}
+      - OLLAMA_OPENAI_COMPAT=${OLLAMA_OPENAI_COMPAT:-}
+      - OLLAMA_OPENAI_COMPAT_KEY=${OLLAMA_OPENAI_COMPAT_KEY:-}
+      - OLLAMA_DEFAULT_MODEL=${OLLAMA_DEFAULT_MODEL:-}
+      - OLLAMA_JUDGE_MODEL=${OLLAMA_JUDGE_MODEL:-}
+      - OLLAMA_MODEL_GPT4O=${OLLAMA_MODEL_GPT4O:-}
+      - OLLAMA_MODEL_CLAUDE=${OLLAMA_MODEL_CLAUDE:-}
+      - OLLAMA_MODEL_GEMINI=${OLLAMA_MODEL_GEMINI:-}
+      - OLLAMA_MODEL_LLAMA=${OLLAMA_MODEL_LLAMA:-}
+      - OLLAMA_MODEL_CUSTOM=${OLLAMA_MODEL_CUSTOM:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - PORT=8080
+      - TEMPLATES_DIR=/app/web/templates
+      - STATIC_DIR=/app/web/static
+    depends_on:
+      redis:
+        condition: service_healthy
+    # So OLLAMA_BASE_URL=http://host.docker.internal:11434 (and our loopback rewrite) works on Linux too.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      # Host port defaults to 6380 so a local Redis on 6379 does not conflict.
+      # Override in .env: REDIS_HOST_PORT=6379
+      - "${REDIS_HOST_PORT:-6380}:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes ${REDIS_PASSWORD:+--requirepass $REDIS_PASSWORD}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  redis_data:

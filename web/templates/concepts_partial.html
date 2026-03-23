@@ -1,0 +1,7 @@
+{{ range .Concepts }}
+<button type="button" class="concept-btn"
+  onclick="selectConcept(this, '{{ . }}')"
+  data-concept="{{ . }}">
+  {{ . }}
+</button>
+{{ end }}

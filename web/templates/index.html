@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UNANIMO AI</title>
+  <link rel="manifest" href="/manifest.json" />
+  <meta name="theme-color" content="#0f172a" />
+  <link rel="apple-touch-icon" href="/static/icons/icon-192.png" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/htmx/1.9.10/htmx.min.js"></script>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0f172a; --surface: #1e293b; --surface2: #334155;
+      --accent: #6366f1; --accent2: #8b5cf6; --text: #e2e8f0; --muted: #94a3b8;
+    }
+    body { background: var(--bg); color: var(--text); font-family: 'Inter', system-ui, sans-serif; }
+    .glass { background: rgba(30,41,59,0.8); backdrop-filter: blur(12px); border: 1px solid rgba(99,102,241,0.2); }
+    .concept-btn {
+      background: var(--surface); border: 2px solid var(--surface2);
+      transition: all 0.2s; cursor: pointer; border-radius: 12px; padding: 12px 20px;
+    }
+    .concept-btn:hover { border-color: var(--accent); background: rgba(99,102,241,0.15); transform: translateY(-2px); }
+    .concept-btn.selected { border-color: var(--accent); background: rgba(99,102,241,0.25); }
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border: none; border-radius: 12px; padding: 14px 32px;
+      font-weight: 700; font-size: 1.1rem; cursor: pointer; transition: all 0.2s;
+      color: white; width: 100%;
+    }
+    .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(99,102,241,0.4); }
+    .toggle { position: relative; width: 48px; height: 26px; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider {
+      position: absolute; inset: 0; background: var(--surface2); border-radius: 26px;
+      cursor: pointer; transition: 0.3s;
+    }
+    .toggle-slider:before {
+      content: ''; position: absolute; height: 20px; width: 20px;
+      left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: 0.3s;
+    }
+    input:checked + .toggle-slider { background: var(--accent); }
+    input:checked + .toggle-slider:before { transform: translateX(22px); }
+    .glow { box-shadow: 0 0 40px rgba(99,102,241,0.15); }
+    textarea { background: var(--surface2); border: 1px solid rgba(99,102,241,0.3); color: var(--text); border-radius: 8px; padding: 8px; width: 100%; resize: none; font-size: 0.8rem; }
+    textarea:focus { outline: 2px solid var(--accent); }
+  </style>
+</head>
+<body class="min-h-screen">
+
+  <!-- Header -->
+  <header class="text-center py-12 px-4">
+    <div class="inline-flex items-center gap-3 mb-4">
+      <span style="font-size:2.5rem">🧠</span>
+      <h1 style="font-size:2.8rem; font-weight:900; background:linear-gradient(135deg,#6366f1,#a78bfa,#38bdf8); -webkit-background-clip:text; -webkit-text-fill-color:transparent">
+        UNANIMO AI
+      </h1>
+    </div>
+    <p style="color:var(--muted); font-size:1.1rem">Test conceptual alignment between AI models</p>
+  </header>
+
+  <!-- Main Form -->
+  <main class="max-w-4xl mx-auto px-4 pb-16">
+    <form hx-post="/api/game" hx-target="body" id="gameForm">
+      {{ if eq .ConfigMode "ollama" }}
+      <input type="hidden" name="config_mode" value="ollama" />
+      {{ end }}
+
+      <!-- Step 1: Choose Concept -->
+      <section class="glass rounded-2xl p-6 mb-6 glow">
+        <div class="flex items-center justify-between mb-5">
+          <h2 style="font-size:1.2rem; font-weight:700">① Choose a Concept</h2>
+          <button type="button"
+            hx-get="/api/concepts"
+            hx-target="#conceptGrid"
+            hx-swap="innerHTML"
+            style="background:var(--surface2); border:none; color:var(--muted); padding:8px 16px; border-radius:8px; cursor:pointer; font-size:0.85rem;">
+            🔀 New Concepts
+          </button>
+        </div>
+        <div id="conceptGrid" class="grid grid-cols-2 gap-3" style="grid-template-columns: repeat(auto-fill, minmax(140px,1fr))">
+          {{ range .Concepts }}
+          <button type="button" class="concept-btn"
+            onclick="selectConcept(this, '{{ . }}')"
+            data-concept="{{ . }}">
+            {{ . }}
+          </button>
+          {{ end }}
+        </div>
+        <input type="hidden" name="concept" id="conceptInput" required />
+        <div id="selectedConcept" style="display:none; margin-top:12px; color:var(--accent); font-weight:600; text-align:center;">
+          ✓ Selected: <span id="selectedConceptText"></span>
+        </div>
+      </section>
+
+      <!-- Step 2: Configure Players -->
+      <section class="glass rounded-2xl p-6 mb-6">
+        <h2 style="font-size:1.2rem; font-weight:700; margin-bottom:1.25rem">② Configure AI Players</h2>
+
+        {{ if eq .ConfigMode "ollama" }}
+        <p style="color:var(--muted); font-size:0.9rem; margin-bottom:1rem">
+          Models come from <code style="color:var(--accent)">ollama list</code> (<code>/api/tags</code>); non-chat models like embedders are omitted. Toggle who plays (at least two). With Ollama, generations usually run <strong>one model at a time</strong> so a single GPU does not queue parallel jobs past the HTTP timeout.
+        </p>
+        {{ if .OllamaListError }}
+        <p style="color:#f87171; font-size:0.9rem; margin-bottom:1rem">{{ .OllamaListError }}</p>
+        {{ end }}
+        <div class="space-y-4" id="ollamaPlayerRows">
+          {{ range .Players }}
+          <div class="flex items-start gap-4 p-4 rounded-xl" style="background:var(--surface)">
+            <div class="flex-shrink-0 mt-1">
+              <label class="toggle">
+                <input type="checkbox" name="ollama_model" value="{{ .ModelID }}"
+                  {{ if .Enabled }}checked{{ end }}
+                  onchange="togglePersonaOllama(this, '{{ .FormKey }}')" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-3 mb-2 flex-wrap">
+                <div style="width:10px; height:10px; border-radius:50%; flex-shrink:0; background:{{ modelColor (print .ModelID) }}"></div>
+                <span style="font-weight:700; word-break:break-all">{{ .Name }}</span>
+              </div>
+              <div id="persona_{{ .FormKey }}" style="{{ if not .Enabled }}display:none{{ end }}">
+                <textarea
+                  name="persona_{{ .FormKey }}"
+                  rows="2"
+                  placeholder="Optional persona for this model..."
+                ></textarea>
+              </div>
+            </div>
+          </div>
+          {{ end }}
+        </div>
+        {{ else }}
+        <div class="space-y-4">
+          {{ range .Players }}
+          <div class="flex items-start gap-4 p-4 rounded-xl" style="background:var(--surface)">
+            <div class="flex-shrink-0 mt-1">
+              <label class="toggle">
+                <input type="checkbox" name="player_{{ .ModelID }}_enabled"
+                  {{ if .Enabled }}checked{{ end }}
+                  onchange="togglePersona(this, '{{ .FormKey }}')" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div class="flex-1">
+              <div class="flex items-center gap-3 mb-2">
+                <div style="width:10px; height:10px; border-radius:50%; background:{{ modelColor (print .ModelID) }}"></div>
+                <span style="font-weight:700">{{ .Name }}</span>
+                <span style="font-size:0.75rem; color:var(--muted); font-family:monospace">{{ .ModelID }}</span>
+              </div>
+              <div id="persona_{{ .FormKey }}" style="{{ if not .Enabled }}display:none{{ end }}">
+                <textarea
+                  name="player_{{ .ModelID }}_persona"
+                  rows="2"
+                  placeholder="Optional system prompt / persona (e.g. 'You are a poet from the 19th century...')"
+                ></textarea>
+              </div>
+            </div>
+          </div>
+          {{ end }}
+        </div>
+        {{ end }}
+      </section>
+
+      <!-- Start Button -->
+      <button type="submit" class="btn-primary" id="startBtn" disabled
+        onclick="document.getElementById('startBtn').innerHTML = '⏳ Starting...'">
+        🎮 Start Game
+      </button>
+
+    </form>
+  </main>
+
+  <script>
+    function selectConcept(btn, concept) {
+      document.querySelectorAll('.concept-btn').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      document.getElementById('conceptInput').value = concept;
+      document.getElementById('selectedConceptText').textContent = concept;
+      document.getElementById('selectedConcept').style.display = 'block';
+      document.getElementById('startBtn').disabled = false;
+    }
+
+    function togglePersona(checkbox, formKey) {
+      const persona = document.getElementById('persona_' + formKey);
+      if (persona) {
+        persona.style.display = checkbox.checked ? 'block' : 'none';
+      }
+    }
+
+    function togglePersonaOllama(checkbox, formKey) {
+      togglePersona(checkbox, formKey);
+    }
+
+    // Register service worker
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').catch(console.error);
+      });
+    }
+  </script>
+</body>
+</html>

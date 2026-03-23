@@ -1,0 +1,28 @@
+---
+description: unAInimo product vision, experiment goal, and architecture expectations
+alwaysApply: true
+---
+
+# unAInimo — project context
+
+## What this repo is
+
+**unAInimo** is a PWA that adapts the Unanimo board-game idea to LLMs: several "players" receive the **same stimulus** (a concept from a fixed pool), each produces **exactly eight words** under shared rules, then a **Judge** clusters words semantically so the backend can score **conceptual overlap** (Unanimo-style) and **position / priority alignment** (Synchronicity). See `README.md` for scoring formulas and API surface.
+
+## Primary goal (why it exists)
+
+The motivating **experiment** is to **compare how different models respond to identical inputs** under the same constraints—not open-ended chat, but a **structured, comparable** output (eight words, forbidden roots/numbers/symbols). The game is the **protocol**: it turns "same prompt, different models" into metrics and a UI (HTMX + SSE) instead of ad-hoc side-by-side transcripts.
+
+When changing behavior, preserve: **same stimulus to all players**, **parallel generation**, **shared temperature** (spec: `0.7`), and **judge-mediated semantics** so scores stay comparable across runs.
+
+## Stack (do not casually replace)
+
+- **Backend**: Go, hexagonal layout — `cmd/server`, `internal/domain`, `internal/ports`, `internal/service`, `internal/adapters/{llm,storage,http}`, `web/`.
+- **Frontend**: HTML templates + Tailwind + HTMX; **SSE** for live word stream and judge completion.
+- **Ops**: Docker Compose; Redis with in-memory fallback.
+- **Ollama**: Default API base is **`http://192.168.1.130:11434`** when `OLLAMA_BASE_URL` is unset; long **`OLLAMA_HTTP_TIMEOUT`** (default 900s) and **serial players** (default on for Ollama) avoid GPU-queue client timeouts; embedding-only tags filtered from `/api/tags`.
+
+## Related docs
+
+- `ORIGINAL_RULES.md` — physical Unanimo rules (reference only; digital rules differ, e.g. semantic vs. exact match for some stages).
+- `README.md` — full spec, endpoints, implementation phases.
